@@ -2,6 +2,19 @@
 
 **Function Serverless** (AWS Lambda, **Node.js/TypeScript**) de autenticação por **CPF → JWT**, exposta via **API Gateway**. Um dos 4 repositórios do Tech Challenge — Fase 3 (SOAT/FIAP).
 
+## Parte do sistema (4 repositórios)
+
+| Repositório | Papel |
+|---|---|
+| [fiap-auth-lambda](https://github.com/MathboyL3/fiap-auth-lambda) | Autenticação por CPF → JWT (API Gateway + Lambda) |
+| [fiap-app](https://github.com/MathboyL3/fiap-app) | API principal da oficina (.NET / Kubernetes) |
+| [fiap-infra-k8s](https://github.com/MathboyL3/fiap-infra-k8s) | Infra do cluster (Terraform) |
+| [fiap-infra-db](https://github.com/MathboyL3/fiap-infra-db) | Banco de dados gerenciado (Terraform + Railway) |
+
+> Arquitetura, diagrama de componentes (cloud) e diagramas de sequência:
+> [fiap-app/docs/ARQUITETURA.md](https://github.com/MathboyL3/fiap-app/blob/main/docs/ARQUITETURA.md).
+> Guia de entrega: [fiap-app/docs/ENTREGA.md](https://github.com/MathboyL3/fiap-app/blob/main/docs/ENTREGA.md).
+
 Provisionada por **Terraform** contra **LocalStack** (AWS local, gratuito e offline). O código e o Terraform são idênticos ao que rodaria na AWS real — só muda o endpoint.
 
 ## Propósito
