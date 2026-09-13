@@ -1,0 +1,5 @@
+# Copie para terraform.tfvars (gitignored) e preencha.
+# O jwt_secret DEVE ser o mesmo configurado na aplicacao .NET (fiap-app).
+jwt_secret   = "troque-por-um-segredo-de-32+-caracteres-aqui"
+database_url = "postgresql://postgres:SENHA@gondola.proxy.rlwy.net:11177/railway"
+pg_ssl       = "require"

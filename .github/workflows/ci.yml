@@ -1,0 +1,112 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: lint • test • package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Typecheck (lint)
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Package Lambda (esbuild + zip)
+        run: npm run package
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lambda-zip
+          path: dist/function.zip
+          if-no-files-found: error
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform fmt + validate
+        working-directory: terraform
+        run: |
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false
+          terraform validate -no-color
+
+  deploy-localstack:
+    name: deploy (LocalStack) — smoke test
+    needs: build-test
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    services:
+      localstack:
+        image: localstack/localstack:3.8
+        ports: ["4566:4566"]
+        env:
+          SERVICES: "lambda,apigateway,secretsmanager,iam,logs,sts,cloudwatch"
+          LAMBDA_RUNTIME_EXECUTOR: "docker"
+        options: >-
+          --health-cmd="curl -sf http://localhost:4566/_localstack/health || exit 1"
+          --health-interval=10s --health-timeout=5s --health-retries=20
+          -v /var/run/docker.sock:/var/run/docker.sock
+    env:
+      JWT_SECRET: ${{ secrets.JWT_SECRET }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20", cache: "npm" }
+      - uses: hashicorp/setup-terraform@v3
+        with: { terraform_version: "1.9.8" }
+
+      - name: Guard (secrets presentes?)
+        run: |
+          if [ -z "$JWT_SECRET" ] || [ -z "$DATABASE_URL" ]; then
+            echo "::warning::JWT_SECRET/DATABASE_URL ausentes — deploy pulado."
+            echo "SKIP=1" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install + package
+        if: ${{ env.SKIP != '1' }}
+        run: | 
+          npm ci
+          npm run package
+
+      - name: Terraform apply (LocalStack)
+        if: ${{ env.SKIP != '1' }}
+        working-directory: terraform
+        run: |
+          terraform init -input=false
+          terraform apply -auto-approve -input=false \
+            -var="jwt_secret=${JWT_SECRET}" \
+            -var="database_url=${DATABASE_URL}" \
+            -var='lambda_aws_endpoint=http://localstack:4566'
+
+      - name: Smoke test (CPF invalido -> 400)
+        if: ${{ env.SKIP != '1' }}
+        working-directory: terraform
+        run: |
+          URL="$(terraform output -raw auth_url_localstack)"
+          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$URL" -H 'content-type: application/json' -d '{"cpf":"123"}')
+          echo "HTTP $code"
+          test "$code" = "400"

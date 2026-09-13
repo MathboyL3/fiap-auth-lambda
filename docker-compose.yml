@@ -1,0 +1,16 @@
+# LocalStack: emula AWS (API Gateway + Lambda + Secrets Manager + IAM + Logs)
+# localmente. A Lambda Node roda de verdade num container do runtime nodejs.
+services:
+  localstack:
+    image: localstack/localstack:3.8
+    container_name: fiap-localstack
+    ports:
+      - "4566:4566" # edge (todos os servicos)
+    environment:
+      - SERVICES=lambda,apigateway,secretsmanager,iam,logs,sts,cloudwatch
+      - DEBUG=0
+      - LAMBDA_RUNTIME_IMAGE_MAPPING={"nodejs20.x":"public.ecr.aws/lambda/nodejs:20"}
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - "./.localstack:/var/lib/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
