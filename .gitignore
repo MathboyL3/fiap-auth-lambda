@@ -7,8 +7,9 @@ dist/
 
 # Terraform
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
+.localstack/
+.env.local
