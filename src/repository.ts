@@ -25,8 +25,10 @@ export async function buscarClientePorCpf(
   const client = new Client({ connectionString, ssl });
   await client.connect();
   try {
+    // Colunas em PascalCase (mapeamento EF Core) exigem aspas duplas no Postgres.
+    // documento_* vem do owned type (snake_case).
     const res = await client.query<Cliente>(
-      `SELECT id::text AS id, nome, email
+      `SELECT "Id"::text AS id, "Nome" AS nome, "Email" AS email
          FROM clientes
         WHERE documento_numero = $1
           AND documento_tipo = 'Cpf'
