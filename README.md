@@ -13,7 +13,6 @@
 
 > Arquitetura, diagrama de componentes (cloud) e diagramas de sequência:
 > [fiap-app/docs/ARQUITETURA.md](https://github.com/MathboyL3/fiap-app/blob/main/docs/ARQUITETURA.md).
-> Guia de entrega: [fiap-app/docs/ENTREGA.md](https://github.com/MathboyL3/fiap-app/blob/main/docs/ENTREGA.md).
 
 Provisionada por **Terraform** contra **LocalStack** (AWS local, gratuito e offline). O código e o Terraform são idênticos ao que rodaria na AWS real — só muda o endpoint.
 
