@@ -85,7 +85,7 @@ const server = Bun.serve({
       try {
         return await autenticar(req, requestId);
       } catch (e) {
-        log("error", "Erro interno", { requestId, error: (e as Error).message });
+        log("error", "Erro interno: " + (e as Error).message, { requestId, error: (e as Error).message });
         return json(500, { error: "Erro interno ao autenticar." }, requestId);
       }
     }
