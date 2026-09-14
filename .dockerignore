@@ -1,0 +1,8 @@
+node_modules
+dist
+test
+terraform
+docker-compose.yml
+.env*
+*.md
+docs
