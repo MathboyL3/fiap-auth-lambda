@@ -91,6 +91,24 @@ O endpoint sai em `terraform output auth_url_localstack`:
 npm ci && npm test     # 11 testes (cpf, jwt, handler)
 ```
 
+## Deploy em nuvem (Railway)
+
+Além da Lambda no LocalStack, a autenticação roda **em nuvem real** no **Railway** como um
+**serviço HTTP** (`Bun.serve`), no mesmo projeto `fiap-fase3` do banco. É a mesma lógica
+(validação de CPF, consulta ao Postgres e emissão do **mesmo JWT HS256**), exposta como servidor
+de longa duração em vez de função Lambda.
+
+- **URL pública:** https://fiap-auth-production.up.railway.app — `POST /auth` e `GET /health`.
+- **Código:** [`src/server.ts`](src/server.ts) (Bun) + [`Dockerfile`](Dockerfile). Autodeploy a cada push na `main`.
+- **Variáveis** (Railway → serviço `fiap-auth`):
+  - `JWT_SECRET` — segredo HS256 canônico (igual ao da API .NET);
+  - `DATABASE_URL` — Postgres via **TCP proxy público** com `${{Postgres.PGPASSWORD}}`;
+  - `PGSSL=require`, `PORT=3000` (alinhado ao *target port* do domínio).
+
+> **Por que TCP proxy e não a rede privada?** O driver `pg` (Node/Bun) não resolve a rede privada
+> IPv6-only do Railway; a API .NET (Npgsql) resolve e usa a rede interna. Detalhes em
+> `docs/adr/0003-servidor-bun-no-railway.md`.
+
 ## CI/CD (`.github/workflows/ci.yml`)
 - **PR → main:** `npm ci`, typecheck, testes, `package` (esbuild+zip), `terraform fmt/validate`.
 - **push → main (merge):** sobe **LocalStack** como service, `terraform apply` e **smoke test** do gateway.
@@ -102,3 +120,4 @@ Para rodar na AWS real: remova o bloco `endpoints` do provider (`terraform/versi
 ## Documentação
 - [`docs/adr/0001-estrategia-autenticacao-cpf-jwt.md`](docs/adr/0001-estrategia-autenticacao-cpf-jwt.md)
 - [`docs/adr/0002-localstack-como-nuvem-local.md`](docs/adr/0002-localstack-como-nuvem-local.md)
+- [`docs/adr/0003-servidor-bun-no-railway.md`](docs/adr/0003-servidor-bun-no-railway.md)
