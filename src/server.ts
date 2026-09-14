@@ -73,6 +73,7 @@ async function autenticar(req: Request, requestId: string): Promise<Response> {
 
 const server = Bun.serve({
   port: PORT,
+  hostname: "0.0.0.0",
   async fetch(req) {
     const url = new URL(req.url);
     const requestId = req.headers.get("x-request-id") ?? crypto.randomUUID();
