@@ -1,7 +1,7 @@
 {
   "name": "fiap-auth-lambda",
   "version": "1.0.0",
-  "description": "Servico serverless de autenticacao por CPF -> JWT (Bun, Railway) — Tech Challenge Fase 3",
+  "description": "Function Serverless de autenticacao por CPF -> JWT (Railway Functions, runtime Bun) — Tech Challenge Fase 3",
   "license": "MIT",
   "type": "commonjs",
   "scripts": {
@@ -9,7 +9,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "tsc -p tsconfig.json --noEmit",
-    "start": "bun run src/server.ts"
+    "start": "bun run src/function/index.ts"
   },
   "dependencies": {
     "jsonwebtoken": "^9.0.2",

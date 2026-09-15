@@ -14,7 +14,7 @@ A Fase 3 exige proteger rotas sensíveis da aplicação com **autenticação via
 - A configuração (segredo JWT e connection string) vem de **variáveis de ambiente**, injetadas pela plataforma de hospedagem (Railway).
 
 ## Justificativa
-- **TypeScript/Bun** dá um serviço leve, de subida rápida e baixo overhead — ideal para uma função simples de auth com deploy contínuo por container.
+- **TypeScript/Bun** dá um serviço leve, de subida rápida e baixo overhead — ideal para uma função simples de auth com deploy contínuo como Function Serverless.
 - **JWT HS256 compartilhado** evita introduzir infraestrutura de chaves assimétricas e reaproveita a validação já existente na app.
 - **Validação de existência** (em vez de status) porque o modelo de domínio do cliente não possui campo de status; "cliente cadastrado" é o critério de autorização para abrir/consultar OS.
 
