@@ -4,7 +4,7 @@
  * Mesma lógica de negócio da função Lambda (validação de CPF, consulta ao
  * Postgres e emissão de JWT HS256 compatível com a API .NET), exposta como um
  * serviço HTTP de longa duração. A configuração vem de variáveis de ambiente
- * (JWT_SECRET, DATABASE_URL) — sem AWS/Secrets Manager.
+ * (JWT_SECRET, DATABASE_URL).
  *
  * Rotas:
  *   POST /auth   { "cpf": "529..." }  -> 200 { access_token, token_type, expires_in }

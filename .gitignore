@@ -11,5 +11,4 @@ dist/
 *.tfstate.*
 *.tfvars
 !*.tfvars.example
-.localstack/
 .env.local
