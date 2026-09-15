@@ -10,7 +10,7 @@ export interface Cliente {
  * Consulta um cliente pelo numero de CPF (somente digitos) na tabela `clientes`,
  * considerando apenas documentos do tipo CPF. Retorna null se nao existir.
  *
- * Abre/fecha uma conexao por invocacao (padrao simples para Lambda; para alta
+ * Abre/fecha uma conexao por requisicao (padrao simples; para alta
  * carga usar RDS Proxy/pool). SSL configuravel via PGSSL.
  */
 export async function buscarClientePorCpf(
