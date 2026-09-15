@@ -1,7 +1,7 @@
 /**
  * Servidor HTTP (Bun) para deploy em nuvem (Railway).
  *
- * Mesma lógica de negócio da função Lambda (validação de CPF, consulta ao
+ * Lógica de negócio de autenticação (validação de CPF, consulta ao
  * Postgres e emissão de JWT HS256 compatível com a API .NET), exposta como um
  * serviço HTTP de longa duração. A configuração vem de variáveis de ambiente
  * (JWT_SECRET, DATABASE_URL).
