@@ -1,20 +1,20 @@
 # fiap-auth-lambda
 
-**Function Serverless** (AWS Lambda, **Node.js/TypeScript**) de autenticação por **CPF → JWT**, exposta via **API Gateway**. Um dos 4 repositórios do Tech Challenge — Fase 3 (SOAT/FIAP).
+**Serviço serverless de autenticação por CPF → JWT**, executado como container **Bun** em **nuvem real (Railway)**. Um dos 4 repositórios do Tech Challenge — Fase 3 (SOAT/FIAP).
+
+> O nome do repositório mantém o sufixo `-lambda` por histórico; a autenticação é entregue como um **serviço HTTP de longa duração** (`Bun.serve`) hospedado no Railway, e **não** depende de AWS Lambda.
 
 ## Parte do sistema (4 repositórios)
 
 | Repositório | Papel |
 |---|---|
-| [fiap-auth-lambda](https://github.com/MathboyL3/fiap-auth-lambda) | Autenticação por CPF → JWT (API Gateway + Lambda) |
+| [fiap-auth-lambda](https://github.com/MathboyL3/fiap-auth-lambda) | Autenticação por CPF → JWT (serverless Bun, Railway) |
 | [fiap-app](https://github.com/MathboyL3/fiap-app) | API principal da oficina (.NET / Kubernetes) |
-| [fiap-infra-k8s](https://github.com/MathboyL3/fiap-infra-k8s) | Infra do cluster (Terraform) |
+| [fiap-infra-k8s](https://github.com/MathboyL3/fiap-infra-k8s) | Infra do cluster + gateway Kong (Terraform) |
 | [fiap-infra-db](https://github.com/MathboyL3/fiap-infra-db) | Banco de dados gerenciado (Terraform + Railway) |
 
 > Arquitetura, diagrama de componentes (cloud) e diagramas de sequência:
 > [fiap-app/docs/ARQUITETURA.md](https://github.com/MathboyL3/fiap-app/blob/main/docs/ARQUITETURA.md).
-
-Provisionada por **Terraform** contra **LocalStack** (AWS local, gratuito e offline). O código e o Terraform são idênticos ao que rodaria na AWS real — só muda o endpoint.
 
 ## Propósito
 Proteger rotas sensíveis da aplicação exigindo autenticação do **cliente por CPF**:
@@ -24,26 +24,19 @@ Proteger rotas sensíveis da aplicação exigindo autenticação do **cliente po
 4. **Gera e devolve um JWT** (HS256) válido para consumir as APIs protegidas do `fiap-app`.
 
 ## Tecnologias
-- **Node.js 20 / TypeScript** (AWS Lambda handler)
-- **AWS API Gateway + Lambda + Secrets Manager + IAM + CloudWatch Logs** (via **LocalStack**)
-- **Terraform** (`hashicorp/aws ~> 5`)
-- **PostgreSQL** (Railway — `node-postgres`)
-- **Vitest** (testes), **esbuild** (bundle)
+- **TypeScript** sobre o runtime **Bun** (`Bun.serve`)
+- **PostgreSQL** gerenciado (Railway) via **`node-postgres` (`pg`)**
+- **`jsonwebtoken`** (JWT HS256)
+- **Vitest** (testes unitários)
+- **Docker** (imagem `oven/bun`) + **Railway** (deploy contínuo a partir do GitHub)
 
 ## Arquitetura
 
 ```mermaid
 flowchart LR
-  Client([Cliente]) -->|POST /auth {cpf}| APIGW[API Gateway\nPOST /auth]
-  APIGW -->|AWS_PROXY| L[Lambda fiap-auth\nNode 20]
-  L -->|GetSecretValue| SM[(Secrets Manager\njwt-secret / database-url)]
-  L -->|SELECT clientes WHERE cpf| DB[(Postgres gerenciado\nRailway)]
-  L -->|200 access_token JWT| APIGW --> Client
-  subgraph LocalStack["LocalStack (AWS local)"]
-    APIGW
-    L
-    SM
-  end
+  Client([Cliente]) -->|POST /auth {cpf}| S[Serviço auth\nBun.serve — Railway]
+  S -->|SELECT clientes WHERE cpf| DB[(PostgreSQL gerenciado\nRailway)]
+  S -->|200 access_token JWT| Client
 ```
 
 ### Contrato da API
@@ -56,6 +49,8 @@ flowchart LR
 | `404` | CPF válido, cliente não cadastrado | `{ error }` |
 | `500` | erro interno | `{ error }` |
 
+`GET /health` — `200 "ok"` (health check).
+
 ### Contrato do JWT (interoperável com a app .NET)
 - **Algoritmo:** HS256, **mesmo `secret`** da `fiap-app`.
 - **`iss`/`aud`:** `Oficina.Api` / `Oficina.Api`.
@@ -63,40 +58,14 @@ flowchart LR
 
 ## Estrutura
 ```
-src/        handler, cpf, jwt, repository, config, logger
-test/       testes vitest (cpf, jwt, handler)
-terraform/  aws_lambda_function + api_gateway + secretsmanager + iam (LocalStack)
-scripts/    package (esbuild+zip), deploy-local, smoke-test
-```
-
-## Execução local (deploy + teste e2e)
-Pré-requisitos: **Docker**, **Terraform ≥ 1.5**, **Node 20+**.
-
-```bash
-# 1) Segredos (NÃO versionar). JWT_SECRET deve ser o MESMO da app .NET.
-export JWT_SECRET="<segredo-hs256-de-32+-caracteres>"
-export DATABASE_URL="postgresql://postgres:<SENHA>@gondola.proxy.rlwy.net:11177/railway"
-
-# 2) Deploy completo (sobe LocalStack, empacota e aplica o Terraform)
-./scripts/deploy-local.sh
-
-# 3) Testar o endpoint (usa o CPF informado ou um default)
-./scripts/smoke-test.sh 52998224725
-```
-O endpoint sai em `terraform output auth_url_localstack`:
-`http://localhost:4566/restapis/<id>/prod/_user_request_/auth`
-
-### Testes unitários
-```bash
-npm ci && npm test     # 11 testes (cpf, jwt, handler)
+src/        server (Bun.serve), cpf, jwt, repository, config, logger
+test/       testes vitest (cpf, jwt)
+Dockerfile  imagem Bun para o Railway
 ```
 
 ## Deploy em nuvem (Railway)
-
-Além da Lambda no LocalStack, a autenticação roda **em nuvem real** no **Railway** como um
-**serviço HTTP** (`Bun.serve`), no mesmo projeto `fiap-fase3` do banco. É a mesma lógica
-(validação de CPF, consulta ao Postgres e emissão do **mesmo JWT HS256**), exposta como servidor
-de longa duração em vez de função Lambda.
+A autenticação roda em **nuvem real** no **Railway**, no mesmo projeto `fiap-fase3` do banco, como
+um **serviço HTTP** (`Bun.serve`) de longa duração.
 
 - **URL pública:** https://fiap-auth-production.up.railway.app — `POST /auth` e `GET /health`.
 - **Código:** [`src/server.ts`](src/server.ts) (Bun) + [`Dockerfile`](Dockerfile). Autodeploy a cada push na `main`.
@@ -107,17 +76,30 @@ de longa duração em vez de função Lambda.
 
 > **Por que TCP proxy e não a rede privada?** O driver `pg` (Node/Bun) não resolve a rede privada
 > IPv6-only do Railway; a API .NET (Npgsql) resolve e usa a rede interna. Detalhes em
-> `docs/adr/0003-servidor-bun-no-railway.md`.
+> [`docs/adr/0003-servidor-bun-no-railway.md`](docs/adr/0003-servidor-bun-no-railway.md).
+
+## Execução local
+Pré-requisitos: **Bun** (ou Docker) e acesso ao Postgres gerenciado.
+
+```bash
+# Segredos (NÃO versionar). JWT_SECRET deve ser o MESMO da app .NET.
+export JWT_SECRET="<segredo-hs256-de-32+-caracteres>"
+export DATABASE_URL="postgresql://postgres:<SENHA>@<host>:<porta>/railway"
+export PGSSL=require
+
+bun run src/server.ts           # sobe o serviço em :3000
+curl -X POST localhost:3000/auth -H 'content-type: application/json' -d '{"cpf":"52998224725"}'
+```
+
+### Testes unitários
+```bash
+npm ci && npm test     # testes de cpf e jwt (vitest)
+```
 
 ## CI/CD (`.github/workflows/ci.yml`)
-- **PR → main:** `npm ci`, typecheck, testes, `package` (esbuild+zip), `terraform fmt/validate`.
-- **push → main (merge):** sobe **LocalStack** como service, `terraform apply` e **smoke test** do gateway.
-- Secrets necessários: `JWT_SECRET`, `DATABASE_URL` (Settings → Secrets → Actions).
-
-## Nota de portabilidade (LocalStack → AWS)
-Para rodar na AWS real: remova o bloco `endpoints` do provider (`terraform/versions.tf`) e use credenciais reais. O restante (Lambda, API Gateway, Secrets Manager, IAM) é idêntico. Ver `docs/adr/0001-*`.
+- **PR → main** e **push → main:** `npm ci`, typecheck (`tsc --noEmit`) e testes (`vitest`).
+- O deploy é feito pelo **Railway** (autodeploy a partir da `main`).
 
 ## Documentação
 - [`docs/adr/0001-estrategia-autenticacao-cpf-jwt.md`](docs/adr/0001-estrategia-autenticacao-cpf-jwt.md)
-- [`docs/adr/0002-localstack-como-nuvem-local.md`](docs/adr/0002-localstack-como-nuvem-local.md)
 - [`docs/adr/0003-servidor-bun-no-railway.md`](docs/adr/0003-servidor-bun-no-railway.md)
