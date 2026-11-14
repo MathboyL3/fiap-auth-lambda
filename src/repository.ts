@@ -1,42 +1,54 @@
-import { Client } from "pg";
-
 export interface Cliente {
   id: string;
   nome: string;
   email: string;
 }
 
+/** Falha ao consultar o os-service (status != 200/404, rede ou timeout). */
+export class OsServiceError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = "OsServiceError";
+  }
+}
+
 /**
- * Consulta um cliente pelo numero de CPF (somente digitos) na tabela `clientes`,
- * considerando apenas documentos do tipo CPF. Retorna null se nao existir.
- *
- * Abre/fecha uma conexao por requisicao (padrao simples; para alta
- * carga usar RDS Proxy/pool). SSL configuravel via PGSSL.
+ * Consulta um cliente pelo CPF (somente digitos) no endpoint interno do
+ * oficina-os-service: GET {baseUrl}/internal/clientes/por-documento/{cpf}
+ * com o header X-Service-Key. 200 -> Cliente; 404 -> null; qualquer outra
+ * resposta, erro de rede ou timeout -> OsServiceError (sem a chave na mensagem).
  */
 export async function buscarClientePorCpf(
-  connectionString: string,
-  cpfDigits: string,
+  baseUrl: string,
+  serviceKey: string,
+  cpf: string,
+  timeoutMs = 5000,
 ): Promise<Cliente | null> {
-  const ssl =
-    process.env.PGSSL === "require"
-      ? { rejectUnauthorized: false }
-      : undefined;
-
-  const client = new Client({ connectionString, ssl });
-  await client.connect();
+  const url = `${baseUrl.replace(/\/+$/, "")}/internal/clientes/por-documento/${cpf.replace(/\D/g, "")}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
   try {
-    // Colunas em PascalCase (mapeamento EF Core) exigem aspas duplas no Postgres.
-    // documento_* vem do owned type (snake_case).
-    const res = await client.query<Cliente>(
-      `SELECT "Id"::text AS id, "Nome" AS nome, "Email" AS email
-         FROM clientes
-        WHERE documento_numero = $1
-          AND documento_tipo = 'Cpf'
-        LIMIT 1`,
-      [cpfDigits],
-    );
-    return res.rows[0] ?? null;
+    res = await fetch(url, {
+      method: "GET",
+      headers: { "X-Service-Key": serviceKey, Accept: "application/json" },
+      signal: controller.signal,
+    });
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      throw new OsServiceError(`Timeout (${timeoutMs} ms) ao consultar o os-service.`);
+    }
+    throw new OsServiceError(`Falha de rede ao consultar o os-service: ${(e as Error).message}`);
   } finally {
-    await client.end();
+    clearTimeout(timer);
   }
+
+  if (res.status === 404) return null;
+  if (res.status !== 200) {
+    throw new OsServiceError(`os-service respondeu status ${res.status}.`, res.status);
+  }
+  return (await res.json()) as Cliente;
 }
