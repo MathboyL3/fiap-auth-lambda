@@ -1,3 +1,5 @@
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buscarClientePorCpf, OsServiceError } from "../src/repository";
 
@@ -88,5 +90,49 @@ describe("buscarClientePorCpf", () => {
     const fn = stubFetch(async () => new Response("", { status: 404 }));
     await buscarClientePorCpf(BASE, KEY, "529.982.247-25");
     expect(fn.mock.calls[0][0]).toMatch(/\/por-documento\/52998224725$/);
+  });
+});
+
+describe("buscarClientePorCpf - resposta 200 invalida", () => {
+  it("{} -> OsServiceError", async () => {
+    stubFetch(async () => new Response("{}", { status: 200 }));
+    const p = buscarClientePorCpf(BASE, KEY, "52998224725");
+    await expect(p).rejects.toBeInstanceOf(OsServiceError);
+    await expect(p).rejects.toThrow("Resposta invalida do servico de clientes");
+  });
+
+  it("campos vazios ou nao-string -> OsServiceError", async () => {
+    stubFetch(async () =>
+      new Response(JSON.stringify({ id: "a", nome: "", email: 1 }), { status: 200 }),
+    );
+    await expect(buscarClientePorCpf(BASE, KEY, "52998224725")).rejects.toBeInstanceOf(OsServiceError);
+  });
+
+  it("JSON invalido -> OsServiceError", async () => {
+    stubFetch(async () => new Response("not json", { status: 200 }));
+    await expect(buscarClientePorCpf(BASE, KEY, "52998224725")).rejects.toBeInstanceOf(OsServiceError);
+  });
+});
+
+describe("buscarClientePorCpf - corpo pendurado (servidor real)", () => {
+  let server: Server;
+  afterEach(() => {
+    server.closeAllConnections();
+    server.close();
+  });
+
+  it("headers + '{' sem fechar -> OsServiceError por timeout", async () => {
+    server = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.write("{");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+
+    const t0 = Date.now();
+    const p = buscarClientePorCpf(`http://127.0.0.1:${port}`, KEY, "52998224725", 200);
+    await expect(p).rejects.toBeInstanceOf(OsServiceError);
+    await expect(p).rejects.toThrow(/timeout/i);
+    expect(Date.now() - t0).toBeLessThan(2000);
   });
 });

@@ -7,6 +7,12 @@ export interface AppConfig {
   osServiceTimeoutMs: number;
 }
 
+/** Inteiro positivo <= 2147483647 (limite do setTimeout); senao 5000. */
+function parseTimeoutMs(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : 5000;
+}
+
 let cached: AppConfig | null = null;
 
 /**
@@ -30,7 +36,7 @@ export async function loadConfig(): Promise<AppConfig> {
   const secret = process.env.JWT_SECRET ?? "";
   const osServiceUrl = process.env.OS_SERVICE_URL ?? "";
   const osServiceKey = process.env.OS_SERVICE_KEY ?? "";
-  const osServiceTimeoutMs = Number(process.env.OS_SERVICE_TIMEOUT_MS ?? "5000") || 5000;
+  const osServiceTimeoutMs = parseTimeoutMs(process.env.OS_SERVICE_TIMEOUT_MS);
 
   if (!secret) throw new Error("JWT_SECRET nao configurado.");
   if (!osServiceUrl) throw new Error("OS_SERVICE_URL nao configurado.");

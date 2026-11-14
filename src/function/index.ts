@@ -39,6 +39,12 @@ function log(level: Level, message: string, ctx: Record<string, unknown> = {}): 
 interface JwtConfig { secret: string; issuer: string; audience: string; expirationMinutes: number; }
 interface AppConfig { jwt: JwtConfig; osServiceUrl: string; osServiceKey: string; osServiceTimeoutMs: number; }
 
+/** Inteiro positivo <= 2147483647 (limite do setTimeout); senao 5000. */
+function parseTimeoutMs(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : 5000;
+}
+
 let cachedConfig: AppConfig | null = null;
 function loadConfig(): AppConfig {
   if (cachedConfig) return cachedConfig;
@@ -59,7 +65,7 @@ function loadConfig(): AppConfig {
     },
     osServiceUrl,
     osServiceKey,
-    osServiceTimeoutMs: Number(process.env.OS_SERVICE_TIMEOUT_MS ?? "5000") || 5000,
+    osServiceTimeoutMs: parseTimeoutMs(process.env.OS_SERVICE_TIMEOUT_MS),
   };
   return cachedConfig;
 }
@@ -119,14 +125,31 @@ async function buscarClientePorCpf(
   const url = `${baseUrl.replace(/\/+$/, "")}/internal/clientes/por-documento/${cpf.replace(/\D/g, "")}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let res: Response;
+  // O timeout cobre fetch E leitura do corpo (clearTimeout so apos o texto).
   try {
-    res = await fetch(url, {
+    const res = await fetch(url, {
       method: "GET",
       headers: { "X-Service-Key": serviceKey, Accept: "application/json" },
       signal: controller.signal,
     });
+    if (res.status === 404) return null;
+    if (res.status !== 200) {
+      throw new OsServiceError(`os-service respondeu status ${res.status}.`, res.status);
+    }
+    const texto = await res.text();
+    let data: Partial<Cliente> | null;
+    try {
+      data = JSON.parse(texto) as Partial<Cliente> | null;
+    } catch {
+      throw new OsServiceError("Resposta invalida do servico de clientes");
+    }
+    const ok = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+    if (!data || !ok(data.id) || !ok(data.nome) || !ok(data.email)) {
+      throw new OsServiceError("Resposta invalida do servico de clientes");
+    }
+    return { id: data.id, nome: data.nome, email: data.email };
   } catch (e) {
+    if (e instanceof OsServiceError) throw e;
     if ((e as Error).name === "AbortError") {
       throw new OsServiceError(`Timeout (${timeoutMs} ms) ao consultar o os-service.`);
     }
@@ -134,12 +157,6 @@ async function buscarClientePorCpf(
   } finally {
     clearTimeout(timer);
   }
-
-  if (res.status === 404) return null;
-  if (res.status !== 200) {
-    throw new OsServiceError(`os-service respondeu status ${res.status}.`, res.status);
-  }
-  return (await res.json()) as Cliente;
 }
 
 // ---------------------------------------------------------------------------
