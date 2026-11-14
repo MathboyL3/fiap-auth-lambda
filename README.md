@@ -56,6 +56,8 @@ flowchart LR
 - **`iss`/`aud`:** `Oficina.Api` / `Oficina.Api`.
 - **Claims:** `sub`=id do cliente, `email`, `role`=`Cliente`, `cpf`, `name`, `jti`, `exp` (60 min).
 
+> **Fase 4:** `DATABASE_URL` aponta para o database `oficina_os` (dono: oficina-os-service), tabela `clientes` com o mesmo schema.
+
 ## Estrutura
 ```
 src/function/index.ts   artefato deployado na Railway Function (arquivo único)
