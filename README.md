@@ -20,13 +20,13 @@
 Proteger rotas sensíveis da aplicação exigindo autenticação do **cliente por CPF**:
 1. Recebe o CPF (`POST /auth`).
 2. **Valida** o CPF (dígitos verificadores).
-3. **Consulta** a existência do cliente na base (tabela `clientes`, banco gerenciado do `fiap-infra-db`).
+3. **Consulta** o cliente no `oficina-os-service` pelo endpoint interno `GET /internal/clientes/por-documento/{cpf}` (a function **não acessa banco**; cada serviço é dono do seu).
 4. **Gera e devolve um JWT** (HS256) válido para consumir as APIs protegidas do `fiap-app`.
 
 ## Tecnologias
 - **TypeScript** sobre o runtime **Bun** (`Bun.serve`)
 - **Railway Functions** (produto serverless nativo do Railway — deploy de um único arquivo)
-- **PostgreSQL** gerenciado (Railway) via **`node-postgres` (`pg`)**
+- **`fetch`** nativo (com timeout) para o endpoint interno do `oficina-os-service`, via Kong
 - **`jsonwebtoken`** (JWT HS256)
 - **Vitest** (testes unitários)
 
@@ -35,7 +35,7 @@ Proteger rotas sensíveis da aplicação exigindo autenticação do **cliente po
 ```mermaid
 flowchart LR
   Client([Cliente]) -->|POST /auth {cpf}| S[Railway Function auth\nBun runtime]
-  S -->|SELECT clientes WHERE cpf| DB[(PostgreSQL gerenciado\nRailway)]
+  S -->|GET /os/internal/clientes/por-documento/{cpf}\nX-Service-Key| K[Kong] --> OS[oficina-os-service]
   S -->|200 access_token JWT| Client
 ```
 
@@ -47,6 +47,7 @@ flowchart LR
 | `200` | CPF válido e cliente existe | `{ access_token, token_type: "Bearer", expires_in }` |
 | `400` | CPF ausente/inválido | `{ error }` |
 | `404` | CPF válido, cliente não cadastrado | `{ error }` |
+| `503` | os-service indisponível/erro (não-404), timeout ou chave rejeitada | `{ error: "Servico de clientes indisponivel." }` |
 | `500` | erro interno | `{ error }` |
 
 `GET /health` — `200 "ok"` (health check).
@@ -56,11 +57,13 @@ flowchart LR
 - **`iss`/`aud`:** `Oficina.Api` / `Oficina.Api`.
 - **Claims:** `sub`=id do cliente, `email`, `role`=`Cliente`, `cpf`, `name`, `jti`, `exp` (60 min).
 
+> **Fase 4:** a function não acessa mais nenhum banco (requisito: "nenhum serviço acessa o banco de outro"). O cliente é consultado no `oficina-os-service` (dono do database `oficina_os`) pelo endpoint interno, autenticado por `X-Service-Key`. As variáveis `DATABASE_URL`/`PGSSL` foram removidas.
+
 ## Estrutura
 ```
 src/function/index.ts   artefato deployado na Railway Function (arquivo único)
 src/                    módulos de referência: cpf, jwt, repository, config, logger
-test/                   testes vitest (cpf, jwt)
+test/                   testes vitest (cpf, jwt, repository com fetch mockado)
 ```
 
 > O `src/function/index.ts` é o código que roda na Function (um único arquivo, imports NPM no
@@ -76,21 +79,20 @@ A autenticação roda como uma **Function Serverless** no **Railway Functions**,
   Railway (aba **Source Code** da Function → **Ctrl+S** para salvar, **Shift+Enter** para deployar).
 - **Variáveis** (Railway → Function `fiap-auth` → *Variables*):
   - `JWT_SECRET` — segredo HS256 canônico (igual ao da API .NET);
-  - `DATABASE_URL` — Postgres via **TCP proxy público** (`${{Postgres.PGPASSWORD}}`);
-  - `PGSSL=require`, e opcionais `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_EXPIRATION_MINUTES`.
+  - `OS_SERVICE_URL` — base do os-service via Kong, **com o prefixo `/os`** (ex.: `https://<host-do-kong>/os`; barra final é tolerada). Obrigatória;
+  - `OS_SERVICE_KEY` — chave do endpoint interno; deve ser **a mesma** configurada no os-service como `InternalApi__ServiceKey` (`OS_INTERNAL_SERVICE_KEY` no `bootstrap-secrets.ps1`). Obrigatória e secreta;
+  - opcionais: `OS_SERVICE_TIMEOUT_MS` (default `5000`), `JWT_ISSUER`, `JWT_AUDIENCE`, `JWT_EXPIRATION_MINUTES`.
 
-> **Por que TCP proxy e não a rede privada?** O driver `pg` (Node/Bun) não resolve a rede privada
-> IPv6-only do Railway; por isso a Function conecta pelo TCP proxy público com SSL. Detalhes em
-> [`docs/adr/0003-railway-function-no-railway.md`](docs/adr/0003-railway-function-no-railway.md).
+> A function roda no Railway (fora do cluster) e chama o os-service pelo Kong. A rota interna é pública no Kong, mas sem a `X-Service-Key` correta responde 401 — trate a chave como segredo e rotacione-a nos dois lados. Detalhes em [`docs/adr/0003-railway-function-no-railway.md`](docs/adr/0003-railway-function-no-railway.md).
 
 ## Execução local
-Pré-requisitos: **Bun** e acesso ao Postgres gerenciado.
+Pré-requisitos: **Bun** e acesso ao `oficina-os-service` (direto ou via Kong).
 
 ```bash
 # Segredos (NÃO versionar). JWT_SECRET deve ser o MESMO da app .NET.
 export JWT_SECRET="<segredo-hs256-de-32+-caracteres>"
-export DATABASE_URL="postgresql://postgres:<SENHA>@<host>:<porta>/railway"
-export PGSSL=require
+export OS_SERVICE_URL="http://localhost:5001"        # ou https://<kong>/os
+export OS_SERVICE_KEY="<mesma InternalApi__ServiceKey do os-service>"
 
 bun run src/function/index.ts   # sobe a Function localmente em :3000
 curl -X POST localhost:3000/auth -H 'content-type: application/json' -d '{"cpf":"52998224725"}'
@@ -98,7 +100,7 @@ curl -X POST localhost:3000/auth -H 'content-type: application/json' -d '{"cpf":
 
 ### Testes unitários
 ```bash
-npm ci && npm test     # testes de cpf e jwt (vitest)
+npm ci && npm test     # testes de cpf, jwt e repository (vitest)
 ```
 
 ## CI/CD (`.github/workflows/ci.yml`)

@@ -2,19 +2,18 @@
 //
 // Function Serverless nativa do Railway (produto "Functions"): um único
 // arquivo executado no runtime Bun. Valida o CPF do cliente, consulta o
-// Postgres gerenciado e devolve um JWT HS256 compatível com a API .NET.
+// oficina-os-service (endpoint interno, sem acesso a banco) e devolve um JWT HS256 compatível com a API .NET.
 //
 // Deploy: colar este arquivo no "Source Code" da Function no canvas do
 // Railway (Ctrl+S para salvar, Shift+Enter para deployar). Imports NPM no
 // formato `pacote@versao` (resolvidos pela Function). Configuração via
-// Service Variables (process.env): JWT_SECRET, DATABASE_URL, e opcionais
-// JWT_ISSUER, JWT_AUDIENCE, JWT_EXPIRATION_MINUTES, PGSSL.
+// Service Variables (process.env): JWT_SECRET, OS_SERVICE_URL, OS_SERVICE_KEY e opcionais
+// JWT_ISSUER, JWT_AUDIENCE, JWT_EXPIRATION_MINUTES, OS_SERVICE_TIMEOUT_MS.
 //
 // Rotas:
 //   POST /auth    { "cpf": "529..." } -> 200 { access_token, token_type, expires_in }
 //   GET  /health                       -> 200 "ok"
 import jwt from "jsonwebtoken@9.0.2";
-import { Client } from "pg@8.13.1";
 import { randomUUID } from "node:crypto";
 
 const PORT = Number(process.env.PORT ?? "3000");
@@ -38,16 +37,24 @@ function log(level: Level, message: string, ctx: Record<string, unknown> = {}): 
 // Configuração (variáveis de ambiente).
 // ---------------------------------------------------------------------------
 interface JwtConfig { secret: string; issuer: string; audience: string; expirationMinutes: number; }
-interface AppConfig { jwt: JwtConfig; databaseUrl: string; }
+interface AppConfig { jwt: JwtConfig; osServiceUrl: string; osServiceKey: string; osServiceTimeoutMs: number; }
+
+/** Inteiro positivo <= 2147483647 (limite do setTimeout); senao 5000. */
+function parseTimeoutMs(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 2147483647 ? n : 5000;
+}
 
 let cachedConfig: AppConfig | null = null;
 function loadConfig(): AppConfig {
   if (cachedConfig) return cachedConfig;
 
   const secret = process.env.JWT_SECRET ?? "";
-  const databaseUrl = process.env.DATABASE_URL ?? "";
+  const osServiceUrl = process.env.OS_SERVICE_URL ?? "";
+  const osServiceKey = process.env.OS_SERVICE_KEY ?? "";
   if (!secret) throw new Error("JWT_SECRET nao configurado.");
-  if (!databaseUrl) throw new Error("DATABASE_URL nao configurado.");
+  if (!osServiceUrl) throw new Error("OS_SERVICE_URL nao configurado.");
+  if (!osServiceKey) throw new Error("OS_SERVICE_KEY nao configurado.");
 
   cachedConfig = {
     jwt: {
@@ -56,7 +63,9 @@ function loadConfig(): AppConfig {
       audience: process.env.JWT_AUDIENCE ?? "Oficina.Api",
       expirationMinutes: Number(process.env.JWT_EXPIRATION_MINUTES ?? "60"),
     },
-    databaseUrl,
+    osServiceUrl,
+    osServiceKey,
+    osServiceTimeoutMs: parseTimeoutMs(process.env.OS_SERVICE_TIMEOUT_MS),
   };
   return cachedConfig;
 }
@@ -86,27 +95,67 @@ function validarDigitos(digits: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Repositório: busca cliente pelo CPF no Postgres gerenciado.
-// SSL configurável via PGSSL=require (o TCP proxy público exige SSL).
+// Repositorio: busca cliente pelo CPF no endpoint interno do oficina-os-service
+// (via Kong). A function NAO acessa o banco do os-service.
 // ---------------------------------------------------------------------------
 interface Cliente { id: string; nome: string; email: string; }
 
-async function buscarClientePorCpf(connectionString: string, cpfDigits: string): Promise<Cliente | null> {
-  const ssl = process.env.PGSSL === "require" ? { rejectUnauthorized: false } : undefined;
-  const client = new Client({ connectionString, ssl });
-  await client.connect();
+class OsServiceError extends Error {
+  constructor(
+    message: string,
+    public readonly status?: number,
+  ) {
+    super(message);
+    this.name = "OsServiceError";
+  }
+}
+
+/**
+ * Consulta um cliente pelo CPF (somente digitos) no endpoint interno do
+ * oficina-os-service: GET {baseUrl}/internal/clientes/por-documento/{cpf}
+ * com o header X-Service-Key. 200 -> Cliente; 404 -> null; qualquer outra
+ * resposta, erro de rede ou timeout -> OsServiceError (sem a chave na mensagem).
+ */
+async function buscarClientePorCpf(
+  baseUrl: string,
+  serviceKey: string,
+  cpf: string,
+  timeoutMs = 5000,
+): Promise<Cliente | null> {
+  const url = `${baseUrl.replace(/\/+$/, "")}/internal/clientes/por-documento/${cpf.replace(/\D/g, "")}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  // O timeout cobre fetch E leitura do corpo (clearTimeout so apos o texto).
   try {
-    const res = await client.query<Cliente>(
-      `SELECT "Id"::text AS id, "Nome" AS nome, "Email" AS email
-         FROM clientes
-        WHERE documento_numero = $1
-          AND documento_tipo = 'Cpf'
-        LIMIT 1`,
-      [cpfDigits],
-    );
-    return res.rows[0] ?? null;
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "X-Service-Key": serviceKey, Accept: "application/json" },
+      signal: controller.signal,
+    });
+    if (res.status === 404) return null;
+    if (res.status !== 200) {
+      throw new OsServiceError(`os-service respondeu status ${res.status}.`, res.status);
+    }
+    const texto = await res.text();
+    let data: Partial<Cliente> | null;
+    try {
+      data = JSON.parse(texto) as Partial<Cliente> | null;
+    } catch {
+      throw new OsServiceError("Resposta invalida do servico de clientes");
+    }
+    const ok = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+    if (!data || !ok(data.id) || !ok(data.nome) || !ok(data.email)) {
+      throw new OsServiceError("Resposta invalida do servico de clientes");
+    }
+    return { id: data.id, nome: data.nome, email: data.email };
+  } catch (e) {
+    if (e instanceof OsServiceError) throw e;
+    if ((e as Error).name === "AbortError") {
+      throw new OsServiceError(`Timeout (${timeoutMs} ms) ao consultar o os-service.`);
+    }
+    throw new OsServiceError(`Falha de rede ao consultar o os-service: ${(e as Error).message}`);
   } finally {
-    await client.end();
+    clearTimeout(timer);
   }
 }
 
@@ -174,7 +223,14 @@ async function autenticar(req: Request, requestId: string): Promise<Response> {
   }
 
   const cfg = loadConfig();
-  const cliente = await buscarClientePorCpf(cfg.databaseUrl, cpfDigits);
+  let cliente: Cliente | null;
+  try {
+    cliente = await buscarClientePorCpf(cfg.osServiceUrl, cfg.osServiceKey, cpfDigits, cfg.osServiceTimeoutMs);
+  } catch (e) {
+    const err = e as OsServiceError;
+    log("error", "Falha ao consultar o os-service", { requestId, status: err.status, error: err.message, cpf: mask(cpfDigits) });
+    return json(503, { error: "Servico de clientes indisponivel." }, requestId);
+  }
   if (!cliente) {
     log("warn", "Cliente nao encontrado", { requestId, cpf: mask(cpfDigits) });
     return json(404, { error: "Cliente nao encontrado para o CPF informado." }, requestId);
